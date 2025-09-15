@@ -2,6 +2,9 @@ from openai import OpenAI
 import os
 import json
 import subprocess
+import argparse
+import datetime
+import traceback
 
 client = OpenAI(
     # This is the default and can be omitted
@@ -82,52 +85,77 @@ def save_intermediate_circuit_representation(circuit_representation: str) -> str
 
 def chat(prompt: str, chat_memory: list) -> str:
     chat_memory.append({"role": "user", "content": prompt})
-    response = client.responses.create(
-        model="gpt-5",
-        input=chat_memory,
-        tools=tools,
-    )
-    # If it is a function call we check if it is a function type and call it again
-    for item in response.output:
-        if item.type == "function_call":
 
-            if item.name == "execute_pyspice_script":
-                pyspice_output = execute_pyspice_script(json.loads(item.arguments))
-                chat_memory.append({
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": json.dumps({
-                    "pyspice_output": pyspice_output
-                    })
-                })
-                # call again with the pyspice output
-                response = client.responses.create(
-                    model="gpt-5",
-                    instructions="Respond only with the output of the executed PySpice script.",
-                    tools=tools,
-                    input=chat_memory,
-                )
-            elif item.name == "execute_schemedraw_script":
-                schemedraw_output = execute_schemedraw_script(json.loads(item.arguments))
-                chat_memory.append({
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": json.dumps({
-                    "schemedraw_output": schemedraw_output
-                    })
-                })
-            elif item.name == "save_intermediate_circuit_representation":
-                save_output = save_intermediate_circuit_representation(json.loads(item.arguments))
-                chat_memory.append({
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": json.dumps({
-                    "save_output": save_output
-                    })
-                })
+    # Iteratively call the model until no more function_call outputs are returned
+    accumulated_text = ""
+    while True:
+        response = client.responses.create(
+            model="gpt-5",
+            input=chat_memory,
+            tools=tools,
+        )
 
-    chat_memory.append({"role": "assistant", "content": response.output_text})
-    return response.output_text
+        # Collect plain assistant text (if any) from this round
+        round_text = getattr(response, 'output_text', '') or ''
+        if round_text:
+            accumulated_text += ("\n" if accumulated_text and round_text else "") + round_text
+
+        # Gather tool calls
+        tool_calls = [item for item in response.output if item.type == "function_call"]
+        if not tool_calls:
+            # No more tool calls -> finalize
+            chat_memory.append({"role": "assistant", "content": accumulated_text})
+            return accumulated_text
+
+        # For each tool call, run the corresponding function and append a function_call_output object
+        for call in tool_calls:
+            try:
+                parsed_args = json.loads(call.arguments) if isinstance(call.arguments, str) else (call.arguments or {})
+            except Exception:
+                parsed_args = {}
+
+            output_payload = {}
+            if call.name == "execute_pyspice_script":
+                script = parsed_args.get("pyspice_script")
+                if not isinstance(script, str):
+                    output_payload['pyspice_output'] = "Error: expected 'pyspice_script' string argument"
+                else:
+                    output_payload['pyspice_output'] = execute_pyspice_script(script)
+            elif call.name == "execute_schemedraw_script":
+                script = parsed_args.get("schemedraw_script")
+                if not isinstance(script, str):
+                    output_payload['schemedraw_output'] = "Error: expected 'schemedraw_script' string argument"
+                else:
+                    output_payload['schemedraw_output'] = execute_schemedraw_script(script)
+            elif call.name == "save_intermediate_circuit_representation":
+                rep = parsed_args.get("circuit_representation")
+                if not isinstance(rep, str):
+                    output_payload['save_output'] = "Error: expected 'circuit_representation' string argument"
+                else:
+                    output_payload['save_output'] = save_intermediate_circuit_representation(rep)
+            else:
+                output_payload['error'] = f"Unknown tool name: {call.name}"
+
+            chat_memory.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps(output_payload)
+            })
+
+        # Loop continues; the updated chat_memory (with function_call_output items) is sent next iteration
+
+
+# ----------------------------- Persistence Helpers -----------------------------
+def save_chat_memory(chat_memory, path):
+    """Persist chat memory to a JSON file."""
+    with open(path, 'w') as f:
+        json.dump(chat_memory, f, indent=2)
+
+
+def load_chat_memory(path):
+    """Load previously saved chat memory from JSON file."""
+    with open(path, 'r') as f:
+        return json.load(f)
 
 
 system_promt = """
@@ -199,13 +227,65 @@ for node in analysis.nodes.values():
 
 
 def main():
-    chat_memory = []
-    chat_memory.append({"role": "system", "content": system_promt})
-    chat_memory.append({"role": "user", "content": "You are a helpful assistant that can execute PySpice scripts."})
-    while True:
-        prompt = input("Enter your prompt: ")
-        response = chat(prompt, chat_memory)
-        print("Response: ", response)
+    parser = argparse.ArgumentParser(description="Interactive PySpice assistant with resume capability")
+    parser.add_argument('--resume', metavar='FILE', help='Resume from a previously saved chat memory JSON file')
+    parser.add_argument('--auto-save', metavar='FILE', default='chat_memory_autosave.json', help='Autosave chat memory after each turn')
+    parser.add_argument('--dump-on-crash', metavar='FILE', default=None, help='File to dump chat memory if an unhandled exception occurs (default: timestamped)')
+    args = parser.parse_args()
+
+    if args.resume:
+        try:
+            chat_memory = load_chat_memory(args.resume)
+            print(f"[Resume] Loaded chat memory from {args.resume} (entries={len(chat_memory)})")
+        except Exception as e:
+            print(f"[Resume] Failed to load {args.resume}: {e}. Starting fresh.")
+            chat_memory = []
+    else:
+        chat_memory = []
+
+    # Ensure system prompt exists exactly once at start of a fresh session
+    if not any(m.get('role') == 'system' for m in chat_memory):
+        chat_memory.append({"role": "system", "content": system_promt})
+        chat_memory.append({"role": "user", "content": "You are a helpful assistant that can execute PySpice scripts."})
+
+    def autosave():
+        if args.auto_save:
+            try:
+                save_chat_memory(chat_memory, args.auto_save)
+            except Exception as e:
+                print(f"[Warn] Failed autosave: {e}")
+
+    autosave()
+
+    try:
+        while True:
+            try:
+                prompt = input("Enter your prompt: ")
+            except EOFError:
+                print("\n[Exit] EOF received. Saving and quitting.")
+                autosave()
+                break
+            if prompt.strip().lower() in {':q', 'quit', 'exit'}:
+                print('[Exit] User requested termination.')
+                autosave()
+                break
+            response_text = chat(prompt, chat_memory)
+            print("Response: ", response_text)
+            autosave()
+    except KeyboardInterrupt:
+        print("\n[Exit] KeyboardInterrupt. Saving state.")
+        autosave()
+    except Exception:
+        # Crash dump
+        dump_file = args.dump_on_crash or f"chat_memory_crash_{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json"
+        try:
+            save_chat_memory(chat_memory, dump_file)
+            print(f"[Crash] Unhandled exception. Chat memory dumped to {dump_file}")
+        except Exception as se:
+            print(f"[Crash] Failed to dump chat memory: {se}")
+        print("[Crash] Exception traceback:")
+        traceback.print_exc()
+        raise
 if __name__ == "__main__":
     main()
 
