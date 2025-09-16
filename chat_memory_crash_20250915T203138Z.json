@@ -37,4 +37,12 @@
       }
     ]
   },
+  {
+    "role": "assistant",
+    "content": ""
+  },
+  {
+    "role": "user",
+    "content": "continue"
+  }
 ]

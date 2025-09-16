@@ -7,9 +7,10 @@ class Component:
     value: str       # '10k', '1uF', '5V', etc.
 
 components = [
-    Component(name='V1', ctype='V', nodes=('in', '0'), value='PULSE(0V 1V 0s 1us 1us 100ms 200ms)'),
-    Component(name='R1', ctype='R', nodes=('in', '0'), value='1Ω'),
-    Component(name='R2', ctype='R', nodes=('in', '0'), value='2Ω'),
-    Component(name='R3', ctype='R', nodes=('in', '0'), value='3Ω'),
-    Component(name='C1', ctype='C', nodes=('in', '0'), value='1µF'),
+    Component(name='V1', ctype='V', nodes=('VIN', '0'), value='6V'),
+    Component(name='R1', ctype='R', nodes=('VIN', '0'), value='1Ω'),
+    Component(name='R2', ctype='R', nodes=('VIN', '0'), value='2Ω'),
+    Component(name='R3', ctype='R', nodes=('VIN', '0'), value='3Ω'),
+    Component(name='R4', ctype='R', nodes=('VIN', '0'), value='4Ω'),
+    Component(name='C1', ctype='C', nodes=('VIN', '0'), value='3uF'),
 ]

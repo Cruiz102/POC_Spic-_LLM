@@ -72,9 +72,10 @@ def execute_schemedraw_script(script: str) -> str:
         f.write(script)
     result = subprocess.run(["python", "scheme_script.py"], capture_output=True, text=True)
     os.remove("scheme_script.py")
+    result_string = f" The script that was passed was the following{script}"
     if result.returncode != 0:
         return f"Error executing script: {result.stderr}"
-    return result.stdout
+    return result + result.stdout
 
 def save_intermediate_circuit_representation(circuit_representation: str) -> str:
     with open("circuit_representation.py", "w") as f:
@@ -88,7 +89,14 @@ def chat(prompt: str, chat_memory: list) -> str:
 
     # Iteratively call the model until no more function_call outputs are returned
     accumulated_text = ""
+    circuit_drawed = False
     while True:
+        if circuit_drawed:
+            prompt = input("Prompt: ")
+            chat_memory.append({"role": "user", "content": prompt})
+            circuit_drawed = False
+
+
         response = client.responses.create(
             model="gpt-5",
             input=chat_memory,
@@ -127,6 +135,7 @@ def chat(prompt: str, chat_memory: list) -> str:
                     output_payload['schemedraw_output'] = "Error: expected 'schemedraw_script' string argument"
                 else:
                     output_payload['schemedraw_output'] = execute_schemedraw_script(script)
+                    circuit_drawed = True
             elif call.name == "save_intermediate_circuit_representation":
                 rep = parsed_args.get("circuit_representation")
                 if not isinstance(rep, str):
@@ -137,12 +146,10 @@ def chat(prompt: str, chat_memory: list) -> str:
                 output_payload['error'] = f"Unknown tool name: {call.name}"
 
             chat_memory.append({
-                "type": "function_call_output",
-                "call_id": call.call_id,
-                "output": json.dumps(output_payload)
+                "content" : json.dumps(output_payload),
+                "role": "assistant",
             })
 
-        # Loop continues; the updated chat_memory (with function_call_output items) is sent next iteration
 
 
 # ----------------------------- Persistence Helpers -----------------------------
@@ -248,33 +255,18 @@ def main():
         chat_memory.append({"role": "system", "content": system_promt})
         chat_memory.append({"role": "user", "content": "You are a helpful assistant that can execute PySpice scripts."})
 
-    def autosave():
-        if args.auto_save:
-            try:
-                save_chat_memory(chat_memory, args.auto_save)
-            except Exception as e:
-                print(f"[Warn] Failed autosave: {e}")
-
-    autosave()
+    if args.auto_save:
+        save_chat_memory(chat_memory, args.auto_save)
 
     try:
         while True:
-            try:
-                prompt = input("Enter your prompt: ")
-            except EOFError:
-                print("\n[Exit] EOF received. Saving and quitting.")
-                autosave()
-                break
-            if prompt.strip().lower() in {':q', 'quit', 'exit'}:
-                print('[Exit] User requested termination.')
-                autosave()
-                break
+            prompt = input("Enter your prompt: ")
+            print("\n[Exit] EOF received. Saving and quitting.")
             response_text = chat(prompt, chat_memory)
             print("Response: ", response_text)
-            autosave()
     except KeyboardInterrupt:
         print("\n[Exit] KeyboardInterrupt. Saving state.")
-        autosave()
+       
     except Exception:
         # Crash dump
         dump_file = args.dump_on_crash or f"chat_memory_crash_{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json"
