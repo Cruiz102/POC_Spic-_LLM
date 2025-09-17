@@ -1,0 +1,34 @@
+[
+  {
+    "role": "system",
+    "content": "\n\nYou are a helpful assistant that can do the following things:\n You have access to a pyspice enviroment where you can execute pyspice scripts and can draw with schemedraw.\n\n You can do the following operations:\n\n the user will ask you a question about basic analogs circuits. You will specify that you can only work with (RC) circuits.\n if the user ask you to create a circuit that is not an RC circuit you will tell them that you can only work with RC circuits.\n\n The first thing that will ask for is to provide a description of the circuit they want to create. That means that you will\n iterate with the user until you have a full description of the circuit they want to create.\n\n\n After having a good description of the circuit you will create a a graph represention of the circuit.\n build a list of components and nodes that you will use to create the circuit with the following format:\n\n\n # ---------- 1) Common circuit IR ----------\n@dataclass\nclass Component:\n    name: str        # e.g. \"R1\", \"C1\", \"V1\"\n    ctype: str       # 'R','C','V','I','D', ...\n    nodes: Tuple[str, str]  # (n1, n2)\n    value: str       # '10k', '1uF', '5V', etc.\n\n\nafter creating the description you will interpret the lost of components and draw the circuit with schemedraw.\nyou will create a script that visualize it and save that into a file called circuit.png\n\n\nThe user with this visualiztion could prompt you to change some components or values. so you will iterate with the user until they are satisfied with the circuit.\n\n\n\nafter doing that you will create a pyspice script that simulate the circuit and print the output voltages of each node.\nyou will run the script and return the output to the user.\n\n\n The following is an example of a PySpice script that creates a simple RC circuit and simulates its transient response:\n import PySpice.Logging.Logging as Logging\nlogger = Logging.setup_logging()\n\n\nfrom PySpice.Spice.Netlist import Circuit\nfrom PySpice.Unit import *\n\ncircuit = Circuit('Resistor Bridge')\n\ncircuit.V('input', 1, circuit.gnd, 10@u_V)\ncircuit.R(1, 1, 2, 2@u_k\u03a9)\ncircuit.R(2, 1, 3, 1@u_k\u03a9)\ncircuit.R(3, 2, circuit.gnd, 1@u_k\u03a9)\ncircuit.R(4, 3, circuit.gnd, 2@u_k\u03a9)\ncircuit.R(5, 3, 2, 2@u_k\u03a9)\n\nsimulator = circuit.simulator(temperature=25, nominal_temperature=25)\nanalysis = simulator.operating_point()\n\nfor node in analysis.nodes.values():\n    print('Node {}: {:4.1f} V'.format(str(node), float(node))) # Fixme: format value + unit\n\nMake sure that the generated code for spice always print the results in that way we can evaluate it \nand let the user have that information.\n\n\nMake sure that after you use each tol you talk about what has been done.\n\n"
+  },
+  {
+    "role": "user",
+    "content": "You are a helpful assistant that can execute PySpice scripts."
+  },
+  {
+    "role": "user",
+    "content": "Could you generate me a cicuit with 1 volt of source and 4 parallel branches with a resistance of 1 ,2 ,3 ohms and a 5th brannch  with a capacitance of 3 microfarad? if you still need more data just put defaults values."
+  },
+  {
+    "content": "{\"save_output\": \"# ---------- 1) Common circuit IR ----------\\nComponent(name='V1', ctype='V', nodes=('n1','0'), value='1V')\\nComponent(name='R1', ctype='R', nodes=('n1','0'), value='1\\u03a9')\\nComponent(name='R2', ctype='R', nodes=('n1','0'), value='2\\u03a9')\\nComponent(name='R3', ctype='R', nodes=('n1','0'), value='3\\u03a9')\\nComponent(name='R4', ctype='R', nodes=('n1','0'), value='4\\u03a9')\\nComponent(name='C1', ctype='C', nodes=('n1','0'), value='3uF')\"}",
+    "role": "assistant"
+  },
+  {
+    "role": "user",
+    "content": "nice run simulation with th circuit then"
+  },
+  {
+    "content": "{\"save_output\": \"# ---------- 1) Common circuit IR ----------\\nComponent(name='V1', ctype='V', nodes=('n1','0'), value='1V')\\nComponent(name='R1', ctype='R', nodes=('n1','0'), value='1ohm')\\nComponent(name='R2', ctype='R', nodes=('n1','0'), value='2ohm')\\nComponent(name='R3', ctype='R', nodes=('n1','0'), value='3ohm')\\nComponent(name='R4', ctype='R', nodes=('n1','0'), value='4ohm')\\nComponent(name='C1', ctype='C', nodes=('n1','0'), value='3uF')\"}",
+    "role": "assistant"
+  },
+  {
+    "content": "{\"schemedraw_output\": \" The script that was passed was the followingimport schemdraw\\nimport schemdraw.elements as elm\\n\\nwith schemdraw.Drawing() as d:\\n    top = d.add(elm.Dot(open=True).label('n1'))\\n\\n    d.push()\\n    d.add(elm.SourceV().down().label('V1 1V'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d += elm.Line().right().length(2)\\n    d.push()\\n    d.add(elm.Resistor().down().label('R1 1ohm'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d += elm.Line().right().length(2)\\n    d.push()\\n    d.add(elm.Resistor().down().label('R2 2ohm'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d += elm.Line().right().length(2)\\n    d.push()\\n    d.add(elm.Resistor().down().label('R3 3ohm'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d += elm.Line().right().length(2)\\n    d.push()\\n    d.add(elm.Resistor().down().label('R4 4ohm'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d += elm.Line().right().length(2)\\n    d.push()\\n    d.add(elm.Capacitor().down().label('C1 3uF'))\\n    d.add(elm.Ground())\\n    d.pop()\\n\\n    d.save('circuit.png')\"}",
+    "role": "assistant"
+  },
+  {
+    "content": "{\"pyspice_output\": \"The pyspice script generated was the following import PySpice.Logging.Logging as Logging\\nlogger = Logging.setup_logging()\\n\\nfrom PySpice.Spice.Netlist import Circuit\\nfrom PySpice.Unit import *\\n\\ncircuit = Circuit('Parallel RC branches')\\n\\ncircuit.V('input', 'n1', circuit.gnd, 1@u_V)\\ncircuit.R(1, 'n1', circuit.gnd, 1@u_Ohm)\\ncircuit.R(2, 'n1', circuit.gnd, 2@u_Ohm)\\ncircuit.R(3, 'n1', circuit.gnd, 3@u_Ohm)\\ncircuit.R(4, 'n1', circuit.gnd, 4@u_Ohm)\\ncircuit.C(1, 'n1', circuit.gnd, 3@u_uF)\\n\\nsimulator = circuit.simulator(temperature=25, nominal_temperature=25)\\nanalysis = simulator.operating_point()\\n\\nfor node in analysis.nodes.values():\\n    print('Node {}: {:4.1f} V'.format(str(node), float(node)))<class 'dict'>\\n\"}",
+    "role": "assistant"
+  }
+]

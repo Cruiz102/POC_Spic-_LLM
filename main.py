@@ -59,28 +59,27 @@ tools = [
 ]
 
 def execute_pyspice_script(script: str) -> str:
-    with open("temp_script.py", "w") as f:
+    with open("spice_generated_code.py", "w") as f:
         f.write(script)
     result = subprocess.run(["python", "temp_script.py"], capture_output=True, text=True)
-    os.remove("temp_script.py")
+    result_string = f"The pyspice script generated was the following {script}"
     if result.returncode != 0:
         return f"Error executing script: {result.stderr}"
-    return result.stdout
+    return result_string + result.stdout
 
 def execute_schemedraw_script(script: str) -> str:
     with open("scheme_script.py", "w") as f:
         f.write(script)
     result = subprocess.run(["python", "scheme_script.py"], capture_output=True, text=True)
-    os.remove("scheme_script.py")
     result_string = f" The script that was passed was the following{script}"
     if result.returncode != 0:
         return f"Error executing script: {result.stderr}"
-    return result + result.stdout
+    return result_string + result.stdout
 
 def save_intermediate_circuit_representation(circuit_representation: str) -> str:
     with open("circuit_representation.py", "w") as f:
         f.write(circuit_representation)
-    return "Circuit representation saved to circuit_representation.py"
+    return circuit_representation
 
 
 
@@ -89,66 +88,69 @@ def chat(prompt: str, chat_memory: list) -> str:
 
     # Iteratively call the model until no more function_call outputs are returned
     accumulated_text = ""
-    circuit_drawed = False
-    while True:
-        if circuit_drawed:
-            prompt = input("Prompt: ")
-            chat_memory.append({"role": "user", "content": prompt})
-            circuit_drawed = False
 
 
-        response = client.responses.create(
-            model="gpt-5",
-            input=chat_memory,
-            tools=tools,
-        )
+    response = client.responses.create(
+        model="gpt-5",
+        input=chat_memory,
+        tools=tools,
+    )
 
-        # Collect plain assistant text (if any) from this round
-        round_text = getattr(response, 'output_text', '') or ''
-        if round_text:
-            accumulated_text += ("\n" if accumulated_text and round_text else "") + round_text
+    # Collect plain assistant text (if any) from this round
+    round_text = getattr(response, 'output_text', '') or ''
+    if round_text:
+        accumulated_text += ("\n" if accumulated_text and round_text else "") + round_text
 
-        # Gather tool calls
-        tool_calls = [item for item in response.output if item.type == "function_call"]
-        if not tool_calls:
-            # No more tool calls -> finalize
-            chat_memory.append({"role": "assistant", "content": accumulated_text})
-            return accumulated_text
+    # Gather tool calls
+    tool_calls = [item for item in response.output if item.type == "function_call"]
+    if not tool_calls:
+        # No more tool calls -> finalize
+        chat_memory.append({"role": "assistant", "content": accumulated_text})
+        return accumulated_text
 
-        # For each tool call, run the corresponding function and append a function_call_output object
-        for call in tool_calls:
-            try:
-                parsed_args = json.loads(call.arguments) if isinstance(call.arguments, str) else (call.arguments or {})
-            except Exception:
-                parsed_args = {}
+    # For each tool call, run the corresponding function and append a function_call_output object
+    for call in tool_calls:
+        try:
+            parsed_args = json.loads(call.arguments) if isinstance(call.arguments, str) else (call.arguments or {})
+        except Exception:
+            parsed_args = {}
 
-            output_payload = {}
-            if call.name == "execute_pyspice_script":
-                script = parsed_args.get("pyspice_script")
-                if not isinstance(script, str):
-                    output_payload['pyspice_output'] = "Error: expected 'pyspice_script' string argument"
-                else:
-                    output_payload['pyspice_output'] = execute_pyspice_script(script)
-            elif call.name == "execute_schemedraw_script":
-                script = parsed_args.get("schemedraw_script")
-                if not isinstance(script, str):
-                    output_payload['schemedraw_output'] = "Error: expected 'schemedraw_script' string argument"
-                else:
-                    output_payload['schemedraw_output'] = execute_schemedraw_script(script)
-                    circuit_drawed = True
-            elif call.name == "save_intermediate_circuit_representation":
-                rep = parsed_args.get("circuit_representation")
-                if not isinstance(rep, str):
-                    output_payload['save_output'] = "Error: expected 'circuit_representation' string argument"
-                else:
-                    output_payload['save_output'] = save_intermediate_circuit_representation(rep)
+        output_payload = {}
+        if call.name == "execute_pyspice_script":
+            script = parsed_args.get("pyspice_script")
+            if not isinstance(script, str):
+                output_payload['pyspice_output'] = "Error: expected 'pyspice_script' string argument"
             else:
-                output_payload['error'] = f"Unknown tool name: {call.name}"
+                output_payload['pyspice_output'] = execute_pyspice_script(script)
+        elif call.name == "execute_schemedraw_script":
+            script = parsed_args.get("schemedraw_script")
+            if not isinstance(script, str):
+                output_payload['schemedraw_output'] = "Error: expected 'schemedraw_script' string argument"
+            else:
+                output_payload['schemedraw_output'] = execute_schemedraw_script(script)
+        elif call.name == "save_intermediate_circuit_representation":
+            rep = parsed_args.get("circuit_representation")
+            if not isinstance(rep, str):
+                output_payload['save_output'] = "Error: expected 'circuit_representation' string argument"
+            else:
+                output_payload['save_output'] = save_intermediate_circuit_representation(rep)
+        else:
+            output_payload['error'] = f"Unknown tool name: {call.name}"
 
-            chat_memory.append({
-                "content" : json.dumps(output_payload),
-                "role": "assistant",
-            })
+        chat_memory.append({
+            "content" : json.dumps(output_payload),
+            "role": "assistant",
+        })
+
+
+    final_response = client.responses.create(
+        model="gpt-5",
+        input=chat_memory,
+    )
+
+    return final_response.output_text
+
+
 
 
 
@@ -227,7 +229,11 @@ analysis = simulator.operating_point()
 for node in analysis.nodes.values():
     print('Node {}: {:4.1f} V'.format(str(node), float(node))) # Fixme: format value + unit
 
+Make sure that the generated code for spice always print the results in that way we can evaluate it 
+and let the user have that information.
 
+
+Make sure that after you use each tol you talk about what has been done.
 
 """
 

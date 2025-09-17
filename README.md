@@ -9,7 +9,7 @@ Getting Started in Linux:
 ```bash
 sudo apt update
 sudo apt install libngspice0-dev
-pip install -r requirement.txt
+pip install -r requirements.txt
 
 ```
 
